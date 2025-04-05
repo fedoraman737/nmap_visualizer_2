@@ -55,6 +55,10 @@ A web-based visualization tool for nmap network scans.
 - For testing without nmap, you can uncomment the dummy data line in app.py
 - This tool is for educational and network administration purposes only
 
+## Development
+
+This project was developed with assistance from Claude 3.7 Sonnet AI, which helped generate the initial codebase structure, visualization components, and nmap integration.
+
 ## License
 
 MIT
