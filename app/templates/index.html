@@ -26,6 +26,16 @@
             pointer-events: none;
             font: 12px sans-serif;
         }
+        .loading {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        /* Color nodes by service type */
+        .node-web { fill: #ff7f0e; }
+        .node-ssh { fill: #2ca02c; }
+        .node-dns { fill: #1f77b4; }
+        .node-other { fill: #d62728; }
+        .node-router { fill: #9467bd; }
     </style>
 </head>
 <body>
@@ -52,7 +62,14 @@
                                     <option value="os">OS Detection</option>
                                 </select>
                             </div>
-                            <button type="submit" class="btn btn-primary">Run Scan</button>
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="use-cache" checked>
+                                <label class="form-check-label" for="use-cache">Use cached results if available</label>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <button type="submit" class="btn btn-primary">Run Scan</button>
+                                <button type="button" id="clear-cache-btn" class="btn btn-secondary">Clear Cache</button>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -67,12 +84,28 @@
                         </div>
                     </div>
                 </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header">
+                        Host Details
+                    </div>
+                    <div class="card-body">
+                        <div id="host-details">
+                            <p class="text-muted">Select a host in the visualization to see details.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="col-md-8">
                 <div class="card">
-                    <div class="card-header">
-                        Network Visualization
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Network Visualization</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" id="zoom-in">+</button>
+                            <button class="btn btn-outline-secondary" id="zoom-out">-</button>
+                            <button class="btn btn-outline-secondary" id="reset-view">Reset</button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="network-graph"></div>
@@ -87,6 +120,17 @@
         document.addEventListener('DOMContentLoaded', function() {
             const scanForm = document.getElementById('scan-form');
             const scanResults = document.getElementById('scan-results');
+            const hostDetails = document.getElementById('host-details');
+            const useCache = document.getElementById('use-cache');
+            const clearCacheBtn = document.getElementById('clear-cache-btn');
+            const zoomIn = document.getElementById('zoom-in');
+            const zoomOut = document.getElementById('zoom-out');
+            const resetView = document.getElementById('reset-view');
+            
+            let currentZoom = 1;
+            let currentTranslate = [0, 0];
+            let simulation = null;
+            let svg = null;
             
             // Initialize empty visualization
             initializeGraph([]);
@@ -96,11 +140,15 @@
                 
                 const target = document.getElementById('target').value;
                 const scanType = document.getElementById('scan-type').value;
+                const useCacheValue = useCache.checked;
+                
+                // Disable form during scan
+                const formElements = scanForm.querySelectorAll('input, select, button');
+                formElements.forEach(el => el.disabled = true);
                 
                 scanResults.innerHTML = '<p>Scanning...</p>';
+                document.getElementById('network-graph').classList.add('loading');
                 
-                // In a real app, this would call your Flask backend
-                // For now, we'll simulate with the placeholder data
                 fetch('/scan', {
                     method: 'POST',
                     headers: {
@@ -108,7 +156,8 @@
                     },
                     body: new URLSearchParams({
                         'target': target,
-                        'scan_type': scanType
+                        'scan_type': scanType,
+                        'use_cache': useCacheValue
                     })
                 })
                 .then(response => response.json())
@@ -118,11 +167,57 @@
                     
                     // Update visualization with the returned data
                     updateVisualization(data.data.hosts);
+                    
+                    // Re-enable form
+                    formElements.forEach(el => el.disabled = false);
+                    document.getElementById('network-graph').classList.remove('loading');
                 })
                 .catch(error => {
                     scanResults.innerHTML = `<p class="text-danger">Error: ${error.message}</p>`;
+                    formElements.forEach(el => el.disabled = false);
+                    document.getElementById('network-graph').classList.remove('loading');
                 });
             });
+            
+            clearCacheBtn.addEventListener('click', function() {
+                fetch('/clear_cache', {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert('Cache cleared successfully');
+                })
+                .catch(error => {
+                    alert('Error clearing cache: ' + error.message);
+                });
+            });
+            
+            // Zoom controls
+            zoomIn.addEventListener('click', function() {
+                currentZoom *= 1.2;
+                updateZoom();
+            });
+            
+            zoomOut.addEventListener('click', function() {
+                currentZoom *= 0.8;
+                updateZoom();
+            });
+            
+            resetView.addEventListener('click', function() {
+                currentZoom = 1;
+                currentTranslate = [0, 0];
+                updateZoom();
+            });
+            
+            function updateZoom() {
+                if (!svg) return;
+                
+                const width = document.getElementById('network-graph').clientWidth;
+                const height = document.getElementById('network-graph').clientHeight;
+                
+                svg.select('g')
+                   .attr('transform', `translate(${currentTranslate[0] + width/2},${currentTranslate[1] + height/2}) scale(${currentZoom})`);
+            }
             
             function initializeGraph(nodes) {
                 const width = document.getElementById('network-graph').clientWidth;
@@ -132,7 +227,7 @@
                 d3.select("#network-graph").selectAll("*").remove();
                 
                 // Create SVG
-                const svg = d3.select("#network-graph")
+                svg = d3.select("#network-graph")
                     .append("svg")
                     .attr("width", width)
                     .attr("height", height);
@@ -153,7 +248,8 @@
                     id: index,
                     name: host.hostname || host.ip,
                     ip: host.ip,
-                    services: host.ports.map(p => p.service).join(", ")
+                    services: host.ports ? host.ports.map(p => p.service).filter(Boolean).join(", ") : "",
+                    type: getNodeType(host)
                 }));
                 
                 // Create links (in a real app, you'd determine connections)
@@ -174,32 +270,55 @@
                 // Clear any existing SVG
                 d3.select("#network-graph").selectAll("*").remove();
                 
-                const svg = d3.select("#network-graph")
+                svg = d3.select("#network-graph")
                     .append("svg")
                     .attr("width", width)
                     .attr("height", height);
                 
+                // Add a group for zoom/pan
+                const g = svg.append("g")
+                    .attr("transform", `translate(${width/2},${height/2})`);
+                
+                // Enable zoom and pan
+                const zoom = d3.zoom()
+                    .scaleExtent([0.1, 4])
+                    .on("zoom", (event) => {
+                        currentZoom = event.transform.k;
+                        currentTranslate = [event.transform.x - width/2, event.transform.y - height/2];
+                        g.attr("transform", `translate(${event.transform.x},${event.transform.y}) scale(${event.transform.k})`);
+                    });
+                
+                svg.call(zoom);
+                
                 // Create a force simulation
-                const simulation = d3.forceSimulation(nodes)
+                simulation = d3.forceSimulation(nodes)
                     .force("link", d3.forceLink(links).id(d => d.id).distance(100))
                     .force("charge", d3.forceManyBody().strength(-300))
-                    .force("center", d3.forceCenter(width / 2, height / 2));
+                    .force("center", d3.forceCenter(0, 0));
                 
                 // Create links
-                const link = svg.append("g")
+                const link = g.append("g")
                     .selectAll("line")
                     .data(links)
                     .enter().append("line")
                     .attr("class", "link");
                 
                 // Create nodes
-                const node = svg.append("g")
+                const node = g.append("g")
                     .selectAll("g")
                     .data(nodes)
-                    .enter().append("g");
+                    .enter().append("g")
+                    .attr("class", "node-group")
+                    .on("click", function(event, d) {
+                        showHostDetails(hosts[d.id]);
+                    })
+                    .call(d3.drag()
+                        .on("start", dragstarted)
+                        .on("drag", dragged)
+                        .on("end", dragended));
                 
                 node.append("circle")
-                    .attr("class", "node")
+                    .attr("class", d => `node node-${d.type}`)
                     .attr("r", 20);
                 
                 node.append("text")
@@ -222,6 +341,77 @@
                     node
                         .attr("transform", d => `translate(${d.x},${d.y})`);
                 });
+                
+                function dragstarted(event, d) {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x;
+                    d.fy = d.y;
+                }
+                
+                function dragged(event, d) {
+                    d.fx = event.x;
+                    d.fy = event.y;
+                }
+                
+                function dragended(event, d) {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null;
+                    d.fy = null;
+                }
+            }
+            
+            function getNodeType(host) {
+                if (!host.ports || host.ports.length === 0) return "other";
+                
+                // Check for web services
+                if (host.ports.some(p => ['http', 'https'].includes(p.service))) {
+                    return "web";
+                }
+                
+                // Check for SSH
+                if (host.ports.some(p => p.service === 'ssh')) {
+                    return "ssh";
+                }
+                
+                // Check for DNS
+                if (host.ports.some(p => p.service === 'domain')) {
+                    return "dns";
+                }
+                
+                // Check if likely a router
+                if (host.ports.some(p => [53, 80, 443].includes(p.port))) {
+                    return "router";
+                }
+                
+                return "other";
+            }
+            
+            function showHostDetails(host) {
+                let html = `<h5>${host.hostname || host.ip}</h5>`;
+                html += `<p>IP: ${host.ip}</p>`;
+                html += `<p>Status: ${host.status || 'Unknown'}</p>`;
+                
+                if (host.ports && host.ports.length > 0) {
+                    html += '<h6>Open Ports:</h6>';
+                    html += '<table class="table table-sm table-striped">';
+                    html += '<thead><tr><th>Port</th><th>Protocol</th><th>Service</th><th>State</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    host.ports.forEach(port => {
+                        html += `<tr>
+                            <td>${port.port}</td>
+                            <td>${port.protocol || 'tcp'}</td>
+                            <td>${port.service || '-'}</td>
+                            <td>${port.state || '-'}</td>
+                        </tr>`;
+                    });
+                    
+                    html += '</tbody></table>';
+                } else {
+                    html += '<p>No port information available</p>';
+                }
+                
+                hostDetails.innerHTML = html;
             }
         });
     </script>

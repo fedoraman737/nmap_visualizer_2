@@ -1,4 +1,4 @@
-import subprocess
+import nmap
 import xml.etree.ElementTree as ET
 import tempfile
 import os
@@ -21,116 +21,98 @@ class NmapScanner:
         Returns:
             dict: Structured scan results
         """
-        # Create temporary file for XML output
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xml') as tmp:
-            xml_output = tmp.name
-            
         try:
-            # Build nmap command based on scan type
+            # Initialize the nmap scanner
+            nm = nmap.PortScanner()
+            
+            # Build arguments based on scan type
             if scan_type == "basic":
-                cmd = ["nmap", "-sn", "-oX", xml_output, target]
+                arguments = "-sn"  # Ping scan
             elif scan_type == "service":
-                cmd = ["nmap", "-sV", "-oX", xml_output, target]
+                arguments = "-sV"  # Service detection
             elif scan_type == "os":
-                cmd = ["nmap", "-O", "-oX", xml_output, target]
+                arguments = "-O"   # OS detection
             else:
-                cmd = ["nmap", "-oX", xml_output, target]
+                arguments = ""
+            
+            # Run the scan
+            nm.scan(hosts=target, arguments=arguments)
+            
+            # Parse results to our desired format
+            hosts = []
+            
+            for host in nm.all_hosts():
+                host_info = {
+                    "ip": host,
+                    "status": nm[host].state(),
+                    "ports": []
+                }
                 
-            # Run the nmap command
-            process = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE
-            )
-            stdout, stderr = process.communicate()
+                # Add hostname if available
+                if 'hostnames' in nm[host] and nm[host]['hostnames']:
+                    hostnames = nm[host]['hostnames']
+                    if isinstance(hostnames, list) and hostnames:
+                        host_info['hostname'] = hostnames[0]['name']
+                    elif isinstance(hostnames, dict) and 'name' in hostnames:
+                        host_info['hostname'] = hostnames['name']
+                
+                # Add port information if available
+                if 'tcp' in nm[host]:
+                    for port, port_data in nm[host]['tcp'].items():
+                        port_info = {
+                            'port': int(port),
+                            'protocol': 'tcp',
+                            'state': port_data['state']
+                        }
+                        
+                        if 'name' in port_data:
+                            port_info['service'] = port_data['name']
+                        if 'product' in port_data:
+                            port_info['product'] = port_data['product']
+                        if 'version' in port_data:
+                            port_info['version'] = port_data['version']
+                            
+                        host_info['ports'].append(port_info)
+                
+                # Do the same for UDP if available
+                if 'udp' in nm[host]:
+                    for port, port_data in nm[host]['udp'].items():
+                        port_info = {
+                            'port': int(port),
+                            'protocol': 'udp',
+                            'state': port_data['state']
+                        }
+                        
+                        if 'name' in port_data:
+                            port_info['service'] = port_data['name']
+                        if 'product' in port_data:
+                            port_info['product'] = port_data['product']
+                        if 'version' in port_data:
+                            port_info['version'] = port_data['version']
+                            
+                        host_info['ports'].append(port_info)
+                
+                hosts.append(host_info)
             
-            # Parse the XML output
-            results = NmapScanner.parse_xml(xml_output)
-            
-            # Return structured results
             return {
-                "status": "success" if process.returncode == 0 else "error",
-                "message": "Scan completed successfully" if process.returncode == 0 else stderr.decode('utf-8'),
-                "data": results
+                "status": "success",
+                "message": "Scan completed successfully",
+                "data": {"hosts": hosts}
             }
             
+        except nmap.PortScannerError as e:
+            return {
+                "status": "error", 
+                "message": str(e),
+                "data": {}
+            }
         except Exception as e:
             return {
                 "status": "error", 
                 "message": str(e),
                 "data": {}
             }
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(xml_output):
-                os.remove(xml_output)
     
-    @staticmethod
-    def parse_xml(xml_file):
-        """
-        Parse nmap XML output into structured format
-        
-        Args:
-            xml_file (str): Path to XML file
-            
-        Returns:
-            dict: Structured data from the XML
-        """
-        try:
-            tree = ET.parse(xml_file)
-            root = tree.getroot()
-            
-            # Extract hosts information
-            hosts = []
-            
-            for host in root.findall('./host'):
-                host_info = {"ports": []}
-                
-                # Get address
-                address = host.find('./address')
-                if address is not None and address.get('addrtype') == 'ipv4':
-                    host_info['ip'] = address.get('addr')
-                
-                # Get hostname if available
-                hostname_elem = host.find('./hostnames/hostname')
-                if hostname_elem is not None:
-                    host_info['hostname'] = hostname_elem.get('name')
-                    
-                # Get status
-                status = host.find('./status')
-                if status is not None:
-                    host_info['status'] = status.get('state')
-                
-                # Get ports and services
-                for port in host.findall('./ports/port'):
-                    port_info = {
-                        'port': int(port.get('portid')),
-                        'protocol': port.get('protocol')
-                    }
-                    
-                    # Get port state
-                    state = port.find('./state')
-                    if state is not None:
-                        port_info['state'] = state.get('state')
-                    
-                    # Get service if available
-                    service = port.find('./service')
-                    if service is not None:
-                        port_info['service'] = service.get('name')
-                        if service.get('product'):
-                            port_info['product'] = service.get('product')
-                        if service.get('version'):
-                            port_info['version'] = service.get('version')
-                    
-                    host_info['ports'].append(port_info)
-                
-                hosts.append(host_info)
-            
-            return {"hosts": hosts}
-        
-        except Exception as e:
-            return {"hosts": [], "error": str(e)}
-
     @staticmethod
     def get_dummy_data():
         """
