@@ -57,7 +57,7 @@ A web-based visualization tool for nmap network scans.
 
 ## Development
 
-This project was developed with assistance from Claude 3.7 Sonnet AI, which helped generate the initial codebase structure, visualization components, and nmap integration.
+This project was developed with assistance from Claude 3.7 Sonnet AI, which helped generate the initial codebase structure, visualization components, and nmap integration, because for obvious reasons, I need to git gud at doing this myself.
 
 ## License
 
