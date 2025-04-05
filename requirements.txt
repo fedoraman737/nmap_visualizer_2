@@ -1,0 +1,2 @@
+flask==2.3.3
+python-nmap==0.7.1 
